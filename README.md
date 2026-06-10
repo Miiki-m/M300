@@ -90,6 +90,43 @@ sonst `Unbestimmt (Gleichstand: …)`.
 | `Ersteller` | Site-Ersteller via Graph `createdBy` (Best Effort, siehe Hinweise) |
 | `Hinweis` | Auflösungsprobleme, Fallbacks usw. |
 
+### Troubleshooting
+
+**Welche URL gehört in `-TenantAdminUrl`?**
+Die URL des SharePoint **Admin Centers**: `https://<tenantname>-admin.sharepoint.com`.
+Den Tenantnamen siehst du in jeder normalen SharePoint-URL – liegen deine Sites
+unter `https://contoso.sharepoint.com/sites/...`, lautet die Admin-URL
+`https://contoso-admin.sharepoint.com`. **Nicht** die Root-Site und nicht
+`/admin` anhängen.
+
+**Login mit «PnP Management Shell» schlägt fehl (z. B. `AADSTS700016: Application
+with identifier '31359c7f-...' was not found`)**
+Die multi-tenant App «PnP Management Shell» wurde vom PnP-Team im September 2024
+**gelöscht**. Ein früher erteilter Admin Consent im eigenen Tenant ändert daran
+nichts – die App existiert nicht mehr. Seit PnP.PowerShell 2.12 ist deshalb eine
+**eigene App-Registrierung** Pflicht (`-ClientId`):
+
+```powershell
+# Einmalig als Admin ausführen (erstellt die App und fragt den Admin Consent ab):
+Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "PnP-Reporting" -Tenant contoso.onmicrosoft.com
+# Ausgegebene AppId/ClientId notieren und dem Skript mitgeben:
+.\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com -ClientId <AppId>
+```
+
+Alternativ manuell im Entra Admin Center: *App registrations → New registration*
+(Single Tenant) → unter *Authentication* Plattform «Mobile and desktop
+applications» mit Redirect URI `http://localhost` hinzufügen und «Allow public
+client flows» aktivieren → unter *API permissions* die **delegierte**
+SharePoint-Berechtigung `AllSites.FullControl` ergänzen und Admin Consent
+erteilen → die *Application (client) ID* als `-ClientId` verwenden.
+
+Voraussetzungen: Das Konto braucht das Recht, App-Registrierungen zu erstellen,
+und für den Consent einen Admin (z. B. Global Administrator). Für
+`Get-PnPTenantSite` muss der angemeldete Benutzer zusätzlich
+SharePoint-Administrator sein. Bei alten PnP-Versionen (< 2.x auf Windows
+PowerShell 5.1) zuerst auf PowerShell 7 + aktuelles `PnP.PowerShell` wechseln
+(`Get-Module PnP.PowerShell -ListAvailable` zeigt die Version).
+
 ### Hinweise / Grenzen
 
 - **Ersteller:** Graph liefert `createdBy` nicht für jede Site; zuverlässig ist
