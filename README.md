@@ -99,6 +99,25 @@ unter `https://contoso.sharepoint.com/sites/...`, lautet die Admin-URL
 `https://contoso-admin.sharepoint.com`. **Nicht** die Root-Site und nicht
 `/admin` anhängen.
 
+**`Register-PnPEntraIDAppForInteractiveLogin` wird nicht erkannt («Die Benennung
+wurde nicht als Name eines Cmdlet erkannt»)**
+Das Cmdlet existiert erst seit PnP.PowerShell 2.12, und PnP 2.x/3.x läuft nur
+auf PowerShell 7 – in der klassischen «Windows PowerShell 5.1» (blaues Fenster)
+fehlt es immer. Prüfen mit `$PSVersionTable.PSVersion` und
+`Get-Module PnP.PowerShell -ListAvailable`. Lösung:
+
+```powershell
+# 1) PowerShell 7 installieren (einmalig):
+winget install --id Microsoft.PowerShell --source winget
+# 2) Neues Terminal "PowerShell 7" öffnen (pwsh, NICHT "Windows PowerShell"), dann:
+Install-Module PnP.PowerShell -Scope CurrentUser -Force
+Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "PnP-Reporting" -Tenant <tenant>.onmicrosoft.com
+```
+
+Ohne `winget`: MSI von https://aka.ms/powershell herunterladen. Wer kein
+PowerShell 7 installieren kann/darf, erstellt die App-Registrierung manuell im
+Entra Admin Center (siehe oben) – dafür braucht es kein PnP-Cmdlet.
+
 **Login mit «PnP Management Shell» schlägt fehl (z. B. `AADSTS700016: Application
 with identifier '31359c7f-...' was not found`)**
 Die multi-tenant App «PnP Management Shell» wurde vom PnP-Team im September 2024
