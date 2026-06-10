@@ -15,31 +15,40 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ClientId,
+    # =========================================================================
+    # >>> KONFIGURATION: DIESE WERTE AUSFUELLEN <<<
+    # Alle Werte koennen alternativ als Parameter uebergeben werden (so macht
+    # es die von Register-SPSiteReportTask.ps1 erstellte Aufgabe).
+    # =========================================================================
 
-    [Parameter(Mandatory = $true)]
-    [string]$Tenant,
+    # App-ID (Client-ID) der Entra-App-Registrierung:
+    [string]$ClientId = '',
 
-    [Parameter(Mandatory = $true)]
-    [string]$CertificateThumbprint,
+    # Tenant, z.B. 'contoso.onmicrosoft.com':
+    [string]$Tenant = '',
 
-    # Nur noetig ohne -GraphOnly
-    [string]$TenantAdminUrl,
+    # Thumbprint des App-Zertifikats (App-Only ist fuer geplante Laeufe Pflicht):
+    [string]$CertificateThumbprint = '',
 
-    [switch]$GraphOnly,
+    # SharePoint Admin Center URL - nur noetig, wenn GraphOnly = $false:
+    [string]$TenantAdminUrl = '',
 
-    [switch]$DeepScan,
+    # $true = Least-Privilege-Modus (nur Graph, keine SharePoint-Berechtigung):
+    [switch]$GraphOnly = $false,
 
-    [switch]$IncludeOneDrive,
+    # $true = zusaetzlich Site Collection Admins + SP-Besitzergruppen (langsamer):
+    [switch]$DeepScan = $false,
 
-    # Ablageordner fuer CSV-Reports und Transcript-Logs
+    # $true = persoenliche OneDrive-Sites mit auswerten:
+    [switch]$IncludeOneDrive = $false,
+
+    # Ablageordner fuer CSV-Reports und Transcript-Logs:
     [string]$OutputFolder = 'C:\Reports\SPSiteReport',
 
-    # Pfad zum Hauptskript; Standard: gleiche Ablage wie dieser Runner
-    [string]$ScriptPath,
+    # Pfad zum Hauptskript; leer = gleiche Ablage wie dieser Runner:
+    [string]$ScriptPath = '',
 
-    # Reports/Logs aelter als n Tage werden geloescht
+    # Reports/Logs aelter als n Tage werden geloescht:
     [int]$RetentionDays = 90
 )
 
@@ -57,11 +66,14 @@ New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
 Start-Transcript -Path $logPath | Out-Null
 
 try {
+    if (-not $ClientId)              { throw 'ClientId fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
+    if (-not $Tenant)                { throw 'Tenant fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
+    if (-not $CertificateThumbprint) { throw 'CertificateThumbprint fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
     if (-not (Test-Path -Path $ScriptPath)) {
         throw ("Hauptskript nicht gefunden: {0}" -f $ScriptPath)
     }
     if (-not $GraphOnly -and -not $TenantAdminUrl) {
-        throw 'Ohne -GraphOnly muss -TenantAdminUrl angegeben werden.'
+        throw 'Ohne GraphOnly muss TenantAdminUrl angegeben werden.'
     }
 
     $reportParams = @{

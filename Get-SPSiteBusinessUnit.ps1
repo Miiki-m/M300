@@ -133,30 +133,56 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$TenantAdminUrl,
+    # =========================================================================
+    # >>> KONFIGURATION: DIESE WERTE AUSFUELLEN <<<
+    # Alle Werte koennen alternativ auch als Parameter uebergeben werden,
+    # z.B. .\Get-SPSiteBusinessUnit.ps1 -ClientId xxx -GraphOnly
+    # Das Office->Business-Unit-Mapping steht direkt unter dem param-Block.
+    # =========================================================================
 
-    [string]$ClientId,
+    # App-ID (Client-ID) der eigenen Entra-App-Registrierung:
+    [string]$ClientId = '',
 
-    [string]$Tenant,
+    # Eigener Tenant, z.B. 'contoso.onmicrosoft.com' oder die Tenant-ID
+    # (zwingend bei Cert-Authentifizierung):
+    [string]$Tenant = '',
 
-    [string]$CertificateThumbprint,
+    # SharePoint Admin Center, z.B. 'https://contoso-admin.sharepoint.com'
+    # (darf leer bleiben, wenn GraphOnly = $true):
+    [string]$TenantAdminUrl = '',
 
-    [string]$CertificatePath,
+    # Thumbprint des App-Zertifikats im Zertifikatsspeicher.
+    # Leer lassen = interaktiver Browser-Login statt App-Only:
+    [string]$CertificateThumbprint = '',
 
+    # Alternativ zum Thumbprint: Pfad zu einer PFX-Datei. Passwort beim Aufruf
+    # mitgeben: -CertificatePassword (Read-Host -AsSecureString)
+    [string]$CertificatePath = '',
     [securestring]$CertificatePassword,
 
-    [switch]$GraphOnly,
+    # $true = Least-Privilege-Modus rein ueber Microsoft Graph: braucht KEINE
+    # SharePoint-Berechtigung auf der App, nur die Graph-Application-Permissions
+    # Sites.Read.All, Group.Read.All, User.Read.All. Erfordert Cert-Auth.
+    # Einschraenkungen: kein DeepScan, keine Site-Vorlage in der Ausgabe.
+    [switch]$GraphOnly = $false,
 
+    # Pfad der CSV-Ausgabedatei:
     [string]$OutputCsv = '.\SPSite-BusinessUnit-Report.csv',
 
+    # CSV-Trennzeichen (';' = Excel mit deutschen/schweizer Einstellungen):
     [string]$CsvDelimiter = ';',
 
-    [switch]$IncludeOneDrive,
+    # $true = persoenliche OneDrive-Sites mit auswerten:
+    [switch]$IncludeOneDrive = $false,
 
-    [switch]$DeepScan,
+    # $true = zusaetzlich Site Collection Admins + SP-Besitzergruppen pro Site
+    # einlesen (genauer, aber deutlich langsamer; nicht mit GraphOnly moeglich):
+    [switch]$DeepScan = $false,
 
+    # Nur die ersten n Sites verarbeiten (fuer Tests; 0 = alle):
     [int]$Limit = 0,
 
+    # Site-Vorlagen, die uebersprungen werden (Systemsites):
     [string[]]$ExcludeTemplates = @(
         'SRCHCEN#0',            # Suchcenter
         'SPSMSITEHOST#0',       # MySite-Host

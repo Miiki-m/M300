@@ -29,42 +29,60 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ClientId,
+    # =========================================================================
+    # >>> KONFIGURATION: DIESE WERTE AUSFUELLEN <<<
+    # Alle Werte koennen alternativ auch als Parameter uebergeben werden.
+    # =========================================================================
 
-    [Parameter(Mandatory = $true)]
-    [string]$Tenant,
+    # App-ID (Client-ID) der Entra-App-Registrierung:
+    [string]$ClientId = '',
 
-    [Parameter(Mandatory = $true)]
-    [string]$CertificateThumbprint,
+    # Tenant, z.B. 'contoso.onmicrosoft.com':
+    [string]$Tenant = '',
 
-    [string]$TenantAdminUrl,
+    # Thumbprint des App-Zertifikats (muss in Cert:\LocalMachine\My liegen):
+    [string]$CertificateThumbprint = '',
 
-    [switch]$GraphOnly,
+    # SharePoint Admin Center URL - nur noetig, wenn GraphOnly = $false:
+    [string]$TenantAdminUrl = '',
 
-    [switch]$DeepScan,
+    # $true = Least-Privilege-Modus (nur Graph, keine SharePoint-Berechtigung):
+    [switch]$GraphOnly = $false,
 
-    [switch]$IncludeOneDrive,
+    # $true = zusaetzlich Site Collection Admins + SP-Besitzergruppen (langsamer):
+    [switch]$DeepScan = $false,
 
+    # $true = persoenliche OneDrive-Sites mit auswerten:
+    [switch]$IncludeOneDrive = $false,
+
+    # Ablageordner fuer CSV-Reports und Transcript-Logs:
     [string]$OutputFolder = 'C:\Reports\SPSiteReport',
 
+    # Name der geplanten Aufgabe:
     [string]$TaskName = 'SPSite-BusinessUnit-Report',
 
+    # Zeitplan: 'Weekly' (mit $DaysOfWeek) oder 'Daily':
     [ValidateSet('Daily', 'Weekly')]
     [string]$Frequency = 'Weekly',
 
+    # Wochentag(e) bei Frequency = 'Weekly':
     [System.DayOfWeek[]]$DaysOfWeek = @([System.DayOfWeek]::Monday),
 
+    # Startzeit (24h-Format):
     [string]$Time = '06:00',
 
-    # leer = Aufgabe laeuft als SYSTEM
-    [string]$ServiceAccount,
+    # Dienstkonto 'DOMAIN\benutzer' (Passwort wird abgefragt); leer = SYSTEM:
+    [string]$ServiceAccount = '',
 
+    # Pfad zu PowerShell 7:
     [string]$PwshPath = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
 )
 
 $ErrorActionPreference = 'Stop'
 
+if (-not $ClientId)              { throw 'ClientId fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
+if (-not $Tenant)                { throw 'Tenant fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
+if (-not $CertificateThumbprint) { throw 'CertificateThumbprint fehlt - oben im Skript ausfuellen oder als Parameter uebergeben.' }
 if (-not (Test-Path -Path $PwshPath)) {
     throw ("pwsh.exe nicht gefunden unter '{0}'. PowerShell 7 installieren oder -PwshPath angeben." -f $PwshPath)
 }
