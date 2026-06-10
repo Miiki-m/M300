@@ -33,12 +33,37 @@
 
 .PARAMETER TenantAdminUrl
     URL des SharePoint Admin Centers, z.B. https://contoso-admin.sharepoint.com
+    (nicht noetig im -GraphOnly-Modus).
 
 .PARAMETER ClientId
     App-ID (Client-ID) einer Entra-ID-App-Registrierung fuer PnP.PowerShell.
     Seit PnP.PowerShell 2.12 zwingend fuer interaktive Anmeldung. Eine eigene
     App laesst sich einmalig erstellen mit:
         Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "PnP-Reporting" -Tenant contoso.onmicrosoft.com
+
+.PARAMETER Tenant
+    Tenant fuer Cert-Authentifizierung (App-Only), z.B. contoso.onmicrosoft.com
+    oder die Tenant-ID. Zwingend zusammen mit -CertificateThumbprint/-CertificatePath.
+
+.PARAMETER CertificateThumbprint
+    Thumbprint eines Zertifikats im Store CurrentUser\My, dessen oeffentlicher
+    Teil (.cer) in der App-Registrierung hochgeladen ist. Aktiviert App-Only-Auth
+    (unbeaufsichtigt, kein Benutzer-Login).
+
+.PARAMETER CertificatePath
+    Alternativ zu -CertificateThumbprint: Pfad zu einer PFX-Datei.
+
+.PARAMETER CertificatePassword
+    Passwort der PFX-Datei (SecureString), falls -CertificatePath verwendet wird.
+
+.PARAMETER GraphOnly
+    Inventarisiert die Sites rein ueber Microsoft Graph (sites/getAllSites)
+    statt ueber das SharePoint Admin Center. Benoetigt KEINE SharePoint-
+    Berechtigung auf der App - nur die Graph-Application-Permissions
+    Sites.Read.All, Group.Read.All, User.Read.All (alle read-only).
+    Nur mit Cert-Auth moeglich (getAllSites ist App-Only-only).
+    Einschraenkungen: kein DeepScan, keine Site-Vorlage, Owner klassischer
+    Sites via Eigentuemer der Standard-Dokumentbibliothek (Best Effort).
 
 .PARAMETER OutputCsv
     Pfad der CSV-Ausgabedatei. Standard: .\SPSite-BusinessUnit-Report.csv
@@ -71,6 +96,14 @@
     # Testlauf mit 20 Sites
     .\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com -ClientId 1111... -Limit 20
 
+.EXAMPLE
+    # App-Only mit Zertifikat (unbeaufsichtigt, kein Benutzer-Login)
+    .\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com -ClientId 1111... -Tenant contoso.onmicrosoft.com -CertificateThumbprint ABCDEF1234567890...
+
+.EXAMPLE
+    # Least Privilege: rein Graph-basiert, App braucht KEINE SharePoint-Berechtigung
+    .\Get-SPSiteBusinessUnit.ps1 -GraphOnly -ClientId 1111... -Tenant contoso.onmicrosoft.com -CertificateThumbprint ABCDEF1234567890...
+
 .NOTES
     Benoetigte Module (PowerShell 7.4+, empfohlen):
         Install-Module PnP.PowerShell                 -Scope CurrentUser
@@ -81,17 +114,38 @@
         Install-Module Microsoft.Graph.Authentication -RequiredVersion 1.28.0 -Scope CurrentUser
         Hinweis: Register-PnPEntraIDAppForInteractiveLogin existiert in 1.12 nicht -
         die Entra-App-Registrierung dann manuell im Portal anlegen (siehe README).
-    Benoetigte Rechte:
-        - SharePoint-Administrator (fuer Get-PnPTenantSite)
-        - Graph-Delegated-Scopes: User.Read.All, Group.Read.All, Sites.Read.All
-          (Admin Consent erforderlich)
+    Im GraphOnly-Modus wird PnP.PowerShell nicht benoetigt.
+
+    Benoetigte Berechtigungen je Modus:
+      Interaktiv (delegiert, Standard):
+        - Benutzer braucht Rolle SharePoint-Administrator
+        - App: SharePoint delegiert AllSites.FullControl (effektive Rechte =
+          Schnittmenge App + Benutzer); Graph-Login laeuft ueber die
+          Microsoft-Graph-PowerShell-App (User.Read.All, Group.Read.All,
+          Sites.Read.All werden beim Login konsentiert)
+      App-Only mit Zertifikat (voller Funktionsumfang):
+        - App: SharePoint APPLICATION Sites.FullControl.All (fuer
+          Get-PnPTenantSite/Admin-CSOM zwingend - granularer geht es dort nicht)
+        - App: Graph APPLICATION User.Read.All, Group.Read.All, Sites.Read.All
+      App-Only -GraphOnly (Least Privilege, alles read-only):
+        - App: NUR Graph APPLICATION Sites.Read.All, Group.Read.All, User.Read.All
+        - keinerlei SharePoint-Berechtigung noetig
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$TenantAdminUrl,
 
     [string]$ClientId,
+
+    [string]$Tenant,
+
+    [string]$CertificateThumbprint,
+
+    [string]$CertificatePath,
+
+    [securestring]$CertificatePassword,
+
+    [switch]$GraphOnly,
 
     [string]$OutputCsv = '.\SPSite-BusinessUnit-Report.csv',
 
@@ -455,10 +509,79 @@ function Get-SiteCreator {
     return ''
 }
 
+function Get-GraphSites {
+    <#
+        Site-Inventar rein ueber Microsoft Graph (sites/getAllSites, nur App-Only).
+        Benoetigt nur die Graph-Application-Permission Sites.Read.All.
+        Owner-Ermittlung ueber den Eigentuemer der Standard-Dokumentbibliothek
+        (drive.owner): bei Gruppen-Sites die M365-Gruppe, sonst ein Benutzer.
+        Liefert Objekte mit denselben Properties, die die Hauptschleife auch
+        von Get-PnPTenantSite erwartet (Url, Title, Template, GroupId, Owner,
+        OwnerLoginName).
+    #>
+    param([bool]$IncludePersonal)
+
+    $sites = @()
+    $raw = Invoke-GraphGetAll -Uri 'v1.0/sites/getAllSites'
+    foreach ($s in $raw) {
+        $isPersonal = ($s.isPersonalSite -eq $true) -or ($s.webUrl -like '*-my.sharepoint.com*')
+        if ($isPersonal -and -not $IncludePersonal) { continue }
+
+        $groupId    = [guid]::Empty
+        $ownerRaw   = ''
+        $ownerLogin = ''
+        try {
+            $drive = Invoke-MgGraphRequest -Method GET -Uri ('v1.0/sites/{0}/drive?$select=owner' -f $s.id) -ErrorAction Stop
+            if ($drive.owner.group.id) {
+                $groupId  = [guid]$drive.owner.group.id
+                $ownerRaw = ('M365-Gruppe: {0}' -f $drive.owner.group.displayName)
+            }
+            elseif ($drive.owner.user) {
+                $ownerRaw = ('Benutzer: {0}' -f $drive.owner.user.displayName)
+                $ownerUser = $null
+                if ($drive.owner.user.email) { $ownerUser = Get-CachedUser -IdOrUpn $drive.owner.user.email }
+                elseif ($drive.owner.user.id) { $ownerUser = Get-CachedUser -IdOrUpn $drive.owner.user.id }
+                if ($ownerUser) { $ownerLogin = $ownerUser.Upn }
+            }
+        }
+        catch {
+            Write-Verbose ("Drive-Owner fuer {0} nicht lesbar: {1}" -f $s.webUrl, $_.Exception.Message)
+        }
+
+        $sites += [pscustomobject]@{
+            Url            = $s.webUrl
+            Title          = $s.displayName
+            Template       = ''
+            GroupId        = $groupId
+            Owner          = $ownerRaw
+            OwnerLoginName = $ownerLogin
+        }
+    }
+    return $sites
+}
+
 # =============================================================================
-# Modul-Check
+# Validierung & Modul-Check
 # =============================================================================
-foreach ($module in @('PnP.PowerShell', 'Microsoft.Graph.Authentication')) {
+$AppOnly = [bool]($CertificateThumbprint -or $CertificatePath)
+
+if ($AppOnly -and -not ($ClientId -and $Tenant)) {
+    throw 'Cert-Authentifizierung (App-Only) benoetigt zusaetzlich -ClientId und -Tenant (z.B. contoso.onmicrosoft.com).'
+}
+if ($GraphOnly -and -not $AppOnly) {
+    throw 'Der GraphOnly-Modus benoetigt App-Only-Auth: -ClientId, -Tenant und -CertificateThumbprint oder -CertificatePath angeben (sites/getAllSites ist nur App-Only verfuegbar).'
+}
+if (-not $GraphOnly -and -not $TenantAdminUrl) {
+    throw 'Ohne -GraphOnly muss -TenantAdminUrl angegeben werden (https://<tenant>-admin.sharepoint.com).'
+}
+if ($GraphOnly -and $DeepScan) {
+    Write-Warning 'DeepScan ist im GraphOnly-Modus nicht verfuegbar (kein SharePoint-CSOM) und wird ignoriert.'
+    $DeepScan = $false
+}
+
+$requiredModules = @('Microsoft.Graph.Authentication')
+if (-not $GraphOnly) { $requiredModules += 'PnP.PowerShell' }
+foreach ($module in $requiredModules) {
     if (-not (Get-Module -ListAvailable -Name $module)) {
         throw ("Benoetigtes Modul '{0}' fehlt. Installation: Install-Module {0} -Scope CurrentUser" -f $module)
     }
@@ -467,13 +590,49 @@ foreach ($module in @('PnP.PowerShell', 'Microsoft.Graph.Authentication')) {
 # =============================================================================
 # Verbindungen herstellen
 # =============================================================================
-Write-Host ("Verbinde mit SharePoint Admin Center: {0}" -f $TenantAdminUrl) -ForegroundColor Cyan
-$pnpParams = @{ Url = $TenantAdminUrl; Interactive = $true }
-if ($ClientId) { $pnpParams['ClientId'] = $ClientId }
-Connect-PnPOnline @pnpParams
+if ($CertificatePath) { $CertificatePath = (Resolve-Path -Path $CertificatePath).Path }
+
+# PnP-Auth-Parameter zentral aufbauen - werden auch fuer die DeepScan-
+# Verbindungen pro Site wiederverwendet
+$script:PnPAuthParams = @{}
+if ($ClientId) { $script:PnPAuthParams['ClientId'] = $ClientId }
+if ($AppOnly) {
+    $script:PnPAuthParams['Tenant'] = $Tenant
+    if ($CertificateThumbprint) {
+        $script:PnPAuthParams['Thumbprint'] = $CertificateThumbprint
+    }
+    else {
+        $script:PnPAuthParams['CertificatePath'] = $CertificatePath
+        if ($CertificatePassword) { $script:PnPAuthParams['CertificatePassword'] = $CertificatePassword }
+    }
+}
+else {
+    $script:PnPAuthParams['Interactive'] = $true
+}
+
+if (-not $GraphOnly) {
+    Write-Host ("Verbinde mit SharePoint Admin Center: {0}" -f $TenantAdminUrl) -ForegroundColor Cyan
+    $pnpParams = $script:PnPAuthParams.Clone()
+    $pnpParams['Url'] = $TenantAdminUrl
+    Connect-PnPOnline @pnpParams
+}
 
 Write-Host 'Verbinde mit Microsoft Graph...' -ForegroundColor Cyan
-$graphParams = @{ Scopes = @('User.Read.All', 'Group.Read.All', 'Sites.Read.All') }
+if ($AppOnly) {
+    $graphParams = @{ ClientId = $ClientId; TenantId = $Tenant }
+    if ($CertificateThumbprint) {
+        $graphParams['CertificateThumbprint'] = $CertificateThumbprint
+    }
+    elseif ($CertificatePassword) {
+        $graphParams['Certificate'] = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath, $CertificatePassword)
+    }
+    else {
+        $graphParams['Certificate'] = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath)
+    }
+}
+else {
+    $graphParams = @{ Scopes = @('User.Read.All', 'Group.Read.All', 'Sites.Read.All') }
+}
 # -NoWelcome gibt es erst ab Microsoft.Graph 2.x - auf aelteren SDKs weglassen
 if ((Get-Command Connect-MgGraph).Parameters.ContainsKey('NoWelcome')) { $graphParams['NoWelcome'] = $true }
 Connect-MgGraph @graphParams
@@ -482,8 +641,14 @@ Connect-MgGraph @graphParams
 # Sites einlesen
 # =============================================================================
 Write-Host 'Lese Site Collections des Tenants...' -ForegroundColor Cyan
-$sites = @(Get-PnPTenantSite -IncludeOneDriveSites:$IncludeOneDrive |
-    Where-Object { $_.Template -notin $ExcludeTemplates })
+if ($GraphOnly) {
+    $sites = @(Get-GraphSites -IncludePersonal $IncludeOneDrive.IsPresent |
+        Where-Object { $_.Template -notin $ExcludeTemplates })
+}
+else {
+    $sites = @(Get-PnPTenantSite -IncludeOneDriveSites:$IncludeOneDrive |
+        Where-Object { $_.Template -notin $ExcludeTemplates })
+}
 
 if ($Limit -gt 0) { $sites = @($sites | Select-Object -First $Limit) }
 Write-Host ("{0} Sites werden analysiert." -f $sites.Count) -ForegroundColor Cyan
@@ -505,8 +670,9 @@ foreach ($site in $sites) {
     $deepScanNote = ''
     if ($DeepScan) {
         try {
-            $deepParams = @{ Url = $site.Url; Interactive = $true; ReturnConnection = $true }
-            if ($ClientId) { $deepParams['ClientId'] = $ClientId }
+            $deepParams = $script:PnPAuthParams.Clone()
+            $deepParams['Url'] = $site.Url
+            $deepParams['ReturnConnection'] = $true
             $siteConnection = Connect-PnPOnline @deepParams
         }
         catch {

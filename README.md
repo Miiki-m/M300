@@ -58,6 +58,57 @@ Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "PnP-Reporting" -Tena
 .\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com -ClientId <App-Id> -Limit 20 -OutputCsv C:\Temp\report.csv
 ```
 
+### Authentifizierung & Berechtigungen
+
+Das Skript unterstützt drei Modi:
+
+| Modus | Aufruf | Benötigte App-Berechtigungen |
+|---|---|---|
+| **Interaktiv** (delegiert) | `-ClientId` | SharePoint *delegiert* `AllSites.FullControl` – effektive Rechte = Schnittmenge aus App und angemeldetem Benutzer (der SharePoint-Admin sein muss). Graph-Login läuft über die Microsoft-Graph-PowerShell-App. |
+| **App-Only mit Zertifikat** (voller Funktionsumfang) | `-ClientId -Tenant -CertificateThumbprint` | SharePoint **Application** `Sites.FullControl.All` **+** Graph **Application** `Sites.Read.All`, `Group.Read.All`, `User.Read.All` |
+| **App-Only `-GraphOnly`** (Least Privilege) | `-GraphOnly -ClientId -Tenant -CertificateThumbprint` | **Nur** Graph **Application** `Sites.Read.All`, `Group.Read.All`, `User.Read.All` (alles read-only) – keinerlei SharePoint-Berechtigung |
+
+**Wichtig:** Für App-Only zählen ausschliesslich *Application*-Permissions
+(delegierte Scopes sind dann wirkungslos), und `Get-PnPTenantSite` braucht
+App-Only zwingend SharePoint `Sites.FullControl.All` – eine granularere
+Admin-Berechtigung existiert nicht. Wer das (zu Recht) als überprivilegiert
+einstuft, nutzt den `-GraphOnly`-Modus: Site-Inventar via Graph
+`sites/getAllSites`, Owner-Ermittlung über die M365-Gruppe bzw. den
+Eigentümer der Standard-Dokumentbibliothek. Einschränkungen: kein `-DeepScan`
+(keine Site Collection Admins / SP-Besitzergruppen), keine Site-Vorlage in der
+Ausgabe.
+
+**Zertifikat erstellen und hochladen (einmalig, auf Windows):**
+
+```powershell
+# Self-signed Zertifikat erzeugen (3 Jahre gueltig, landet in CurrentUser\My)
+$cert = New-SelfSignedCertificate -Subject "CN=PnP-Reporting" `
+    -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable `
+    -KeySpec Signature -KeyLength 2048 -NotAfter (Get-Date).AddYears(3)
+
+# Oeffentlichen Teil exportieren -> im Portal unter
+# App registrations -> (App) -> "Certificates & secrets" -> "Upload certificate" hochladen
+Export-Certificate -Cert $cert -FilePath .\PnP-Reporting.cer
+
+# Thumbprint anzeigen (wird dem Skript uebergeben)
+$cert.Thumbprint
+```
+
+Aufruf danach:
+
+```powershell
+# Voller Funktionsumfang (App braucht SharePoint Sites.FullControl.All):
+.\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com `
+    -ClientId <AppId> -Tenant contoso.onmicrosoft.com -CertificateThumbprint <Thumbprint>
+
+# Least Privilege ohne SharePoint-Berechtigung:
+.\Get-SPSiteBusinessUnit.ps1 -GraphOnly `
+    -ClientId <AppId> -Tenant contoso.onmicrosoft.com -CertificateThumbprint <Thumbprint>
+```
+
+Statt Thumbprint (Zertifikatsspeicher) geht auch eine PFX-Datei:
+`-CertificatePath .\cert.pfx -CertificatePassword (Read-Host -AsSecureString)`.
+
 ### Office → Business-Unit-Mapping
 
 Im Skript die Tabelle `$OfficeToBusinessUnit` pflegen:
