@@ -212,6 +212,51 @@ SharePoint-Administrator sein. Bei alten PnP-Versionen (< 2.x auf Windows
 PowerShell 5.1) zuerst auf PowerShell 7 + aktuelles `PnP.PowerShell` wechseln
 (`Get-Module PnP.PowerShell -ListAvailable` zeigt die Version).
 
+### Automatisierung (geplante Ausführung)
+
+Für regelmässige, unbeaufsichtigte Läufe liegen zwei Zusatzskripte bei:
+
+- **`Run-SPSiteReport.ps1`** – Wrapper für einen Einzellauf: CSV mit Zeitstempel
+  (`SPSite-BU-Report_<Datum>.csv`), Transcript-Log pro Lauf, automatisches
+  Aufräumen von Reports/Logs älter als `-RetentionDays` (Standard 90 Tage),
+  Exit-Code 0/1 für Monitoring.
+- **`Register-SPSiteReportTask.ps1`** – richtet die Windows-Aufgabenplanung ein
+  (Standard: wöchentlich montags 06:00 als SYSTEM).
+
+**Einrichtung (einmalig, als Admin in PowerShell 7):**
+
+```powershell
+# 1) Module systemweit installieren, damit SYSTEM/Dienstkonto sie findet
+#    (-Scope CurrentUser reicht NICHT für geplante Aufgaben!)
+Install-Module Microsoft.Graph.Authentication -Scope AllUsers
+Install-Module PnP.PowerShell -Scope AllUsers          # entfällt bei -GraphOnly
+
+# 2) Zertifikat in den Maschinenspeicher importieren
+Import-PfxCertificate -FilePath .\PnP-Reporting.pfx `
+    -CertStoreLocation Cert:\LocalMachine\My -Password (Read-Host -AsSecureString)
+#    Bei Dienstkonto statt SYSTEM: certlm.msc -> Zertifikat -> Alle Aufgaben ->
+#    "Private Schlüssel verwalten" -> dem Konto Lesezugriff geben
+
+# 3) Aufgabe registrieren (Beispiel: Least Privilege, wöchentlich Mo 06:00)
+.\Register-SPSiteReportTask.ps1 -GraphOnly -ClientId <AppId> `
+    -Tenant contoso.onmicrosoft.com -CertificateThumbprint <Thumbprint>
+
+# 4) Testlauf und Ergebnis prüfen
+Start-ScheduledTask -TaskName 'SPSite-BusinessUnit-Report'
+(Get-ScheduledTaskInfo -TaskName 'SPSite-BusinessUnit-Report').LastTaskResult   # 0 = OK
+```
+
+Zeitplan anpassen: `-Frequency Daily -Time 05:30` oder
+`-DaysOfWeek Monday,Thursday -Time 07:00`. Dienstkonto statt SYSTEM:
+`-ServiceAccount 'DOMAIN\svc-spreport'` (Passwort wird abgefragt; Konto braucht
+das Recht «Anmelden als Stapelverarbeitungsauftrag»). CSVs und Logs landen in
+`C:\Reports\SPSiteReport` (änderbar über `-OutputFolder`).
+
+Hinweis: Wer keinen Server für geplante Aufgaben hat, kann den Report auch als
+**Azure Automation Runbook** (PowerShell 7.2 Runtime, Zertifikat oder Managed
+Identity) laufen lassen – die Skriptlogik ist dieselbe, nur die
+Modulinstallation und Authentifizierung erfolgen dann in Azure Automation.
+
 ### Hinweise / Grenzen
 
 - **Ersteller:** Graph liefert `createdBy` nicht für jede Site; zuverlässig ist
