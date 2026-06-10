@@ -72,14 +72,19 @@
     .\Get-SPSiteBusinessUnit.ps1 -TenantAdminUrl https://contoso-admin.sharepoint.com -ClientId 1111... -Limit 20
 
 .NOTES
-    Benoetigte Module:
-        Install-Module PnP.PowerShell              -Scope CurrentUser
+    Benoetigte Module (PowerShell 7.4+, empfohlen):
+        Install-Module PnP.PowerShell                 -Scope CurrentUser
         Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
+    Benoetigte Module bei PowerShell 7.0/7.1 (aeltere kompatible Versionen pinnen,
+    aktuelle PnP-Versionen benoetigen PS 7.4+):
+        Install-Module PnP.PowerShell                 -RequiredVersion 1.12.0 -Scope CurrentUser
+        Install-Module Microsoft.Graph.Authentication -RequiredVersion 1.28.0 -Scope CurrentUser
+        Hinweis: Register-PnPEntraIDAppForInteractiveLogin existiert in 1.12 nicht -
+        die Entra-App-Registrierung dann manuell im Portal anlegen (siehe README).
     Benoetigte Rechte:
         - SharePoint-Administrator (fuer Get-PnPTenantSite)
         - Graph-Delegated-Scopes: User.Read.All, Group.Read.All, Sites.Read.All
           (Admin Consent erforderlich)
-    Empfohlen: PowerShell 7.4+ (Voraussetzung fuer aktuelle PnP.PowerShell-Versionen).
 #>
 [CmdletBinding()]
 param(
@@ -468,7 +473,10 @@ if ($ClientId) { $pnpParams['ClientId'] = $ClientId }
 Connect-PnPOnline @pnpParams
 
 Write-Host 'Verbinde mit Microsoft Graph...' -ForegroundColor Cyan
-Connect-MgGraph -Scopes 'User.Read.All', 'Group.Read.All', 'Sites.Read.All' -NoWelcome
+$graphParams = @{ Scopes = @('User.Read.All', 'Group.Read.All', 'Sites.Read.All') }
+# -NoWelcome gibt es erst ab Microsoft.Graph 2.x - auf aelteren SDKs weglassen
+if ((Get-Command Connect-MgGraph).Parameters.ContainsKey('NoWelcome')) { $graphParams['NoWelcome'] = $true }
+Connect-MgGraph @graphParams
 
 # =============================================================================
 # Sites einlesen

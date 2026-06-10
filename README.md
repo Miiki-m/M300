@@ -118,6 +118,21 @@ Ohne `winget`: MSI von https://aka.ms/powershell herunterladen. Wer kein
 PowerShell 7 installieren kann/darf, erstellt die App-Registrierung manuell im
 Entra Admin Center (siehe oben) – dafür braucht es kein PnP-Cmdlet.
 
+**Ich habe nur PowerShell 7.0/7.1 – welche Module?**
+Aktuelle Modulversionen brauchen neuere Hosts (PnP.PowerShell 2.x/3.x → PS 7.2/7.4+,
+Microsoft.Graph 2.x → PS 7.2+). Auf PS 7.1 die letzten kompatiblen Versionen pinnen:
+
+```powershell
+Install-Module PnP.PowerShell                 -RequiredVersion 1.12.0 -Scope CurrentUser
+Install-Module Microsoft.Graph.Authentication -RequiredVersion 1.28.0 -Scope CurrentUser
+```
+
+Das Skript läuft damit unverändert. Einschränkungen: In PnP 1.12 gibt es
+`Register-PnPEntraIDAppForInteractiveLogin` nicht – die App-Registrierung manuell
+im Entra Admin Center anlegen (siehe unten) und die AppId als `-ClientId`
+übergeben. PowerShell 7.1 ist seit 2022 End-of-Life; mittelfristig auf 7.4+
+aktualisieren (`winget install Microsoft.PowerShell` aktualisiert in-place).
+
 **Login mit «PnP Management Shell» schlägt fehl (z. B. `AADSTS700016: Application
 with identifier '31359c7f-...' was not found`)**
 Die multi-tenant App «PnP Management Shell» wurde vom PnP-Team im September 2024
