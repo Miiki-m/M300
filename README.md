@@ -2,6 +2,10 @@
 
 ## SharePoint Site → Business Unit Report (`Get-SPSiteBusinessUnit.ps1`)
 
+> **Schnellstart:** Die komplette Schritt-für-Schritt-Einrichtung
+> (App-Berechtigungen, Zertifikat, Testlauf, Aufgabenplanung) steht in
+> **[ANLEITUNG.md](ANLEITUNG.md)**.
+
 PowerShell-Skript, das alle SharePoint-Online-Sites des Tenants inventarisiert,
 deren Owner/Admins auflöst, pro Person den Office-Standort
 (`physicalDeliveryOfficeName` / Graph: `officeLocation`) ermittelt und daraus
