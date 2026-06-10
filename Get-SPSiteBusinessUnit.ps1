@@ -605,6 +605,13 @@ if ($GraphOnly -and $DeepScan) {
     $DeepScan = $false
 }
 
+# Ausgabepfad frueh validieren - verhindert, dass der Lauf erst ganz am Ende
+# am Export scheitert (z.B. Tippfehler wie '.c:\temp\...' statt 'C:\temp\...')
+$outputDir = Split-Path -Path $OutputCsv -Parent
+if ($outputDir -and -not (Test-Path -Path $outputDir)) {
+    throw ("Ordner fuer OutputCsv existiert nicht oder Pfad ist ungueltig: '{0}' (gueltig z.B. 'C:\Temp\Report.csv' oder '.\Report.csv')" -f $OutputCsv)
+}
+
 $requiredModules = @('Microsoft.Graph.Authentication')
 if (-not $GraphOnly) { $requiredModules += 'PnP.PowerShell' }
 foreach ($module in $requiredModules) {
@@ -667,13 +674,31 @@ Connect-MgGraph @graphParams
 # Sites einlesen
 # =============================================================================
 Write-Host 'Lese Site Collections des Tenants...' -ForegroundColor Cyan
-if ($GraphOnly) {
-    $sites = @(Get-GraphSites -IncludePersonal $IncludeOneDrive.IsPresent |
-        Where-Object { $_.Template -notin $ExcludeTemplates })
+try {
+    if ($GraphOnly) {
+        $sites = @(Get-GraphSites -IncludePersonal $IncludeOneDrive.IsPresent |
+            Where-Object { $_.Template -notin $ExcludeTemplates })
+    }
+    else {
+        $sites = @(Get-PnPTenantSite -IncludeOneDriveSites:$IncludeOneDrive -ErrorAction Stop |
+            Where-Object { $_.Template -notin $ExcludeTemplates })
+    }
 }
-else {
-    $sites = @(Get-PnPTenantSite -IncludeOneDriveSites:$IncludeOneDrive |
-        Where-Object { $_.Template -notin $ExcludeTemplates })
+catch {
+    $hint = ''
+    if ($_.Exception.Message -match 'Unauthorized|401|Access.+denied|AccessDenied|Authorization_RequestDenied') {
+        if ($GraphOnly) {
+            $hint = ' Pruefen: Sind die Graph-APPLICATION-Permissions Sites.Read.All, Group.Read.All, User.Read.All auf der App vorhanden UND wurde Admin Consent erteilt?'
+        }
+        else {
+            $hint = ' Get-PnPTenantSite benoetigt App-Only die SharePoint-APPLICATION-Permission Sites.FullControl.All (+ Admin Consent). Alternative ohne SharePoint-Berechtigung: GraphOnly = $true setzen (nur Graph-Permissions noetig).'
+        }
+    }
+    throw ("Site-Inventar fehlgeschlagen: {0}{1}" -f $_.Exception.Message, $hint)
+}
+
+if ($sites.Count -eq 0) {
+    throw 'Keine Sites gefunden - Abbruch, es wird keine leere CSV geschrieben. (Berechtigungen pruefen, siehe ANLEITUNG.md)'
 }
 
 if ($Limit -gt 0) { $sites = @($sites | Select-Object -First $Limit) }
