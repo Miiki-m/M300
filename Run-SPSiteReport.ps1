@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Wrapper fuer die geplante, unbeaufsichtigte Ausfuehrung von

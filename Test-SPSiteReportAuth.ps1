@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Diagnose fuer die App-Only-Authentifizierung des SP-Site-Reports.

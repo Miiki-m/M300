@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Registriert eine geplante Aufgabe in der Windows-Aufgabenplanung, die den

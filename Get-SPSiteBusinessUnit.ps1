@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Inventarisiert alle SharePoint-Online-Sites des Tenants, loest deren
