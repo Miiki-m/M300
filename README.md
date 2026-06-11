@@ -128,11 +128,23 @@ Offices ohne Mapping-Eintrag werden 1:1 als Business Unit übernommen. Bei
 Gleichstand zweier Offices, die auf **dieselbe** BU zeigen, gilt diese BU –
 sonst `Unbestimmt (Gleichstand: …)`.
 
-### CSV-Spalten
+### CSV-Ausgaben
+
+Das Skript erzeugt **zwei** CSVs:
+
+1. **Detail-Report** (`-OutputCsv`, Standard `SPSite-BusinessUnit-Report.csv`) – alle Spalten unten
+2. **Zuteilungs-Report** (`-OutputBuCsv`, Standard `SPSite-BU-Zuteilung.csv`) – kompakt für Management/Verrechnung:
+   `SiteName`, `SiteUrl`, `BusinessUnit`, `Begruendung` (lesbarer Satz, wie die BU
+   bestimmt wurde, z. B. *«4 von 6 Ownern mit Office (66.7%) am Standort "Zuerich HQ"
+   (Quelle: M365-Gruppe (Owner)); Mapping-Tabelle: "Zuerich HQ" → "BU Corporate"»*),
+   `SpeicherMB`, `SpeicherGB`
+
+#### Spalten Detail-Report
 
 | Spalte | Inhalt |
 |---|---|
 | `SiteUrl`, `SiteTitel`, `Vorlage`, `GroupId` | Stammdaten der Site |
+| `SpeicherMB` / `SpeicherGB` | Speicherverbrauch der Site (PnP: Admin-Center-Wert; GraphOnly: `drive.quota.used`) |
 | `OwnerRoh` | Owner-Wert wie im Tenant hinterlegt (z. B. Gruppen-Claim) |
 | `OwnerQuelle` | Wie die Personen ermittelt wurden (M365-Gruppe, Security-Gruppe, Site-Admin, …) |
 | `AnzahlOwner` / `Owners` | Aufgelöste Personen (dedupliziert) |

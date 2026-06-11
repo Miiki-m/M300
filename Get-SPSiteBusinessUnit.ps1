@@ -30,8 +30,12 @@
          Office -> Business Unit kann in der Tabelle $OfficeToBusinessUnit
          (siehe unten) gepflegt werden; ohne Eintrag gilt das Office selbst
          als Business Unit. Gleichstaende werden ausgewiesen.
-      5. Exportiert das Ergebnis als CSV (Standard: Semikolon-getrennt,
-         UTF-8 mit BOM -> direkt in Excel verwendbar).
+      5. Exportiert zwei CSVs (Standard: Semikolon-getrennt, UTF-8 mit BOM ->
+         direkt in Excel verwendbar):
+         - Detail-Report (OutputCsv): alle Sites mit Ownern, Office-Verteilung,
+           Mehrheit, Speicherverbrauch usw.
+         - Zuteilungs-Report (OutputBuCsv): Site -> Business Unit ->
+           Begruendung der Zuteilung -> Speicherverbrauch.
 
 .PARAMETER TenantAdminUrl
     URL des SharePoint Admin Centers, z.B. https://contoso-admin.sharepoint.com
@@ -68,7 +72,11 @@
     Sites via Eigentuemer der Standard-Dokumentbibliothek (Best Effort).
 
 .PARAMETER OutputCsv
-    Pfad der CSV-Ausgabedatei. Standard: .\SPSite-BusinessUnit-Report.csv
+    Pfad des Detail-Reports. Standard: .\SPSite-BusinessUnit-Report.csv
+
+.PARAMETER OutputBuCsv
+    Pfad des Zuteilungs-Reports (Site -> BU -> Begruendung -> Speicher).
+    Standard: .\SPSite-BU-Zuteilung.csv
 
 .PARAMETER CsvDelimiter
     CSV-Trennzeichen. Standard: ';' (Excel mit deutschen/schweizer
@@ -168,8 +176,11 @@ param(
     # Einschraenkungen: kein DeepScan, keine Site-Vorlage in der Ausgabe.
     [switch]$GraphOnly = $false,
 
-    # Pfad der CSV-Ausgabedatei:
+    # Pfad des Detail-Reports (z.B. 'C:\Temp\Report.csv' oder '.\Report.csv'):
     [string]$OutputCsv = '.\SPSite-BusinessUnit-Report.csv',
+
+    # Pfad des Zuteilungs-Reports (Site -> BU -> Begruendung -> Speicher):
+    [string]$OutputBuCsv = '.\SPSite-BU-Zuteilung.csv',
 
     # CSV-Trennzeichen (';' = Excel mit deutschen/schweizer Einstellungen):
     [string]$CsvDelimiter = ';',
@@ -467,6 +478,7 @@ function Get-MajorityResult {
         OfficeCounts   = ''       # z.B. "Zuerich (4) | Basel (2)"
         MajorityOffice = ''
         SharePercent   = 0
+        TopCount       = 0        # Anzahl Owner am Mehrheits-Standort
         IsTie          = $false
         NoOfficeCount  = 0
     }
@@ -491,6 +503,7 @@ function Get-MajorityResult {
         $result.MajorityOffice = $top.Name
     }
     $result.SharePercent = [math]::Round(100 * $top.Count / $withOffice.Count, 1)
+    $result.TopCount     = $top.Count
     return $result
 }
 
@@ -511,6 +524,43 @@ function Get-BusinessUnit {
 
     if ($units.Count -eq 1) { return [string]$units[0] }
     return ('Unbestimmt (Gleichstand: {0})' -f ($units -join ' | '))
+}
+
+function Get-AssignmentReason {
+    <#
+        Baut die menschenlesbare Begruendung, wie die Business Unit fuer eine
+        Site bestimmt wurde (fuer den Zuteilungs-Report).
+    #>
+    param($Owners, $Majority, [string]$BusinessUnit)
+
+    $ownerCount = @($Owners.Users).Count
+    $sourceText = ($Owners.Sources -join ', ')
+    if (-not $sourceText) { $sourceText = 'keine Quelle' }
+
+    if ($ownerCount -eq 0) {
+        return 'Keine verantwortlichen Personen aufloesbar -> BU unbestimmt'
+    }
+
+    $withOffice = $ownerCount - $Majority.NoOfficeCount
+    if ($withOffice -le 0) {
+        return ('{0} Owner ermittelt (Quelle: {1}), aber bei keinem ist das Office-Attribut (physicalDeliveryOfficeName) gepflegt -> BU unbestimmt' -f $ownerCount, $sourceText)
+    }
+
+    $suffix = ''
+    if ($Majority.NoOfficeCount -gt 0) {
+        $suffix = ('; {0} Owner ohne Office-Attribut unberuecksichtigt' -f $Majority.NoOfficeCount)
+    }
+
+    if ($Majority.IsTie) {
+        return ('Gleichstand zwischen {0} (Basis: {1} Owner mit Office; Quelle: {2}) -> "{3}"{4}' -f $Majority.OfficeCounts, $withOffice, $sourceText, $BusinessUnit, $suffix)
+    }
+
+    $mappingText = 'kein Mapping-Eintrag, Office direkt als BU uebernommen'
+    if ($OfficeToBusinessUnit.ContainsKey($Majority.MajorityOffice)) {
+        $mappingText = ('Mapping-Tabelle: "{0}" -> "{1}"' -f $Majority.MajorityOffice, $BusinessUnit)
+    }
+
+    return ('{0} von {1} Ownern mit Office ({2}%) am Standort "{3}" (Quelle: {4}); {5}{6}' -f $Majority.TopCount, $withOffice, $Majority.SharePercent, $Majority.MajorityOffice, $sourceText, $mappingText, $suffix)
 }
 
 function Get-SiteCreator {
@@ -558,8 +608,12 @@ function Get-GraphSites {
         $groupId    = [guid]::Empty
         $ownerRaw   = ''
         $ownerLogin = ''
+        $storageMB  = 0
         try {
-            $drive = Invoke-MgGraphRequest -Method GET -Uri ('v1.0/sites/{0}/drive?$select=owner' -f $s.id) -ErrorAction Stop
+            $drive = Invoke-MgGraphRequest -Method GET -Uri ('v1.0/sites/{0}/drive?$select=owner,quota' -f $s.id) -ErrorAction Stop
+            if ($drive.quota.used) {
+                $storageMB = [long][math]::Round($drive.quota.used / 1MB)
+            }
             if ($drive.owner.group.id) {
                 $groupId  = [guid]$drive.owner.group.id
                 $ownerRaw = ('M365-Gruppe: {0}' -f $drive.owner.group.displayName)
@@ -577,12 +631,13 @@ function Get-GraphSites {
         }
 
         $sites += [pscustomobject]@{
-            Url            = $s.webUrl
-            Title          = $s.displayName
-            Template       = ''
-            GroupId        = $groupId
-            Owner          = $ownerRaw
-            OwnerLoginName = $ownerLogin
+            Url                 = $s.webUrl
+            Title               = $s.displayName
+            Template            = ''
+            GroupId             = $groupId
+            Owner               = $ownerRaw
+            OwnerLoginName      = $ownerLogin
+            StorageUsageCurrent = $storageMB   # MB, wie bei Get-PnPTenantSite
         }
     }
     return $sites
@@ -607,11 +662,13 @@ if ($GraphOnly -and $DeepScan) {
     $DeepScan = $false
 }
 
-# Ausgabepfad frueh validieren - verhindert, dass der Lauf erst ganz am Ende
+# Ausgabepfade frueh validieren - verhindert, dass der Lauf erst ganz am Ende
 # am Export scheitert (z.B. Tippfehler wie '.c:\temp\...' statt 'C:\temp\...')
-$outputDir = Split-Path -Path $OutputCsv -Parent
-if ($outputDir -and -not (Test-Path -Path $outputDir)) {
-    throw ("Ordner fuer OutputCsv existiert nicht oder Pfad ist ungueltig: '{0}' (gueltig z.B. 'C:\Temp\Report.csv' oder '.\Report.csv')" -f $OutputCsv)
+foreach ($outputPath in @($OutputCsv, $OutputBuCsv)) {
+    $outputDir = Split-Path -Path $outputPath -Parent
+    if ($outputDir -and -not (Test-Path -Path $outputDir)) {
+        throw ("Ordner fuer Ausgabedatei existiert nicht oder Pfad ist ungueltig: '{0}' (gueltig z.B. 'C:\Temp\Report.csv' oder '.\Report.csv')" -f $outputPath)
+    }
 }
 
 $requiredModules = @('Microsoft.Graph.Authentication')
@@ -726,8 +783,9 @@ Write-Host ("{0} Sites werden analysiert." -f $sites.Count) -ForegroundColor Cya
 # =============================================================================
 # Hauptschleife
 # =============================================================================
-$results = [System.Collections.Generic.List[object]]::new()
-$counter = 0
+$results   = [System.Collections.Generic.List[object]]::new()   # Detail-Report
+$buResults = [System.Collections.Generic.List[object]]::new()   # Zuteilungs-Report
+$counter   = 0
 
 foreach ($site in $sites) {
     $counter++
@@ -766,11 +824,22 @@ foreach ($site in $sites) {
     $ownerRaw = $site.OwnerLoginName
     if (-not $ownerRaw) { $ownerRaw = $site.Owner }
 
+    # Speicherverbrauch: Get-PnPTenantSite liefert MB (StorageUsageCurrent,
+    # aeltere Versionen: StorageUsage); Get-GraphSites liefert dasselbe Feld
+    $storageMB = 0
+    if ($site.StorageUsageCurrent) { $storageMB = [long]$site.StorageUsageCurrent }
+    elseif ($site.StorageUsage)    { $storageMB = [long]$site.StorageUsage }
+    $storageGB = [math]::Round($storageMB / 1024, 2)
+
+    $reason = Get-AssignmentReason -Owners $owners -Majority $majority -BusinessUnit $businessUnit
+
     $results.Add([pscustomobject]@{
             SiteUrl               = $site.Url
             SiteTitel             = $site.Title
             Vorlage               = $site.Template
             GroupId               = if ($site.GroupId -and $site.GroupId -ne [guid]::Empty) { [string]$site.GroupId } else { '' }
+            SpeicherMB            = $storageMB
+            SpeicherGB            = $storageGB
             OwnerRoh              = $ownerRaw
             OwnerQuelle           = ($owners.Sources -join ' | ')
             AnzahlOwner           = $owners.Users.Count
@@ -783,6 +852,15 @@ foreach ($site in $sites) {
             BusinessUnit          = $businessUnit
             Ersteller             = Get-SiteCreator -SiteUrl $site.Url
             Hinweis               = ($notes -join ' | ')
+        })
+
+    $buResults.Add([pscustomobject]@{
+            SiteName     = $site.Title
+            SiteUrl      = $site.Url
+            BusinessUnit = $businessUnit
+            Begruendung  = $reason
+            SpeicherMB   = $storageMB
+            SpeicherGB   = $storageGB
         })
 }
 
@@ -801,9 +879,14 @@ else { $csvParams['Encoding'] = 'UTF8' }
 
 $results | Export-Csv @csvParams
 
+$buCsvParams = $csvParams.Clone()
+$buCsvParams['Path'] = $OutputBuCsv
+$buResults | Export-Csv @buCsvParams
+
 Write-Host ''
 Write-Host ("Fertig: {0} Sites ausgewertet." -f $results.Count) -ForegroundColor Green
-Write-Host ("CSV-Report: {0}" -f (Resolve-Path -Path $OutputCsv)) -ForegroundColor Green
+Write-Host ("CSV Detail-Report:     {0}" -f (Resolve-Path -Path $OutputCsv)) -ForegroundColor Green
+Write-Host ("CSV Zuteilungs-Report: {0}" -f (Resolve-Path -Path $OutputBuCsv)) -ForegroundColor Green
 
 # Kurze Zusammenfassung der BU-Verteilung in der Konsole
 $results | Group-Object -Property BusinessUnit | Sort-Object -Property Count -Descending |

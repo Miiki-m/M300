@@ -60,9 +60,10 @@ if (-not $ScriptPath) {
     $ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Get-SPSiteBusinessUnit.ps1'
 }
 
-$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$csvPath   = Join-Path -Path $OutputFolder -ChildPath ('SPSite-BU-Report_{0}.csv' -f $timestamp)
-$logPath   = Join-Path -Path $OutputFolder -ChildPath ('Transcript_{0}.log' -f $timestamp)
+$timestamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
+$csvPath    = Join-Path -Path $OutputFolder -ChildPath ('SPSite-BU-Report_{0}.csv' -f $timestamp)
+$buCsvPath  = Join-Path -Path $OutputFolder -ChildPath ('SPSite-BU-Zuteilung_{0}.csv' -f $timestamp)
+$logPath    = Join-Path -Path $OutputFolder -ChildPath ('Transcript_{0}.log' -f $timestamp)
 
 New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
 Start-Transcript -Path $logPath | Out-Null
@@ -83,6 +84,7 @@ try {
         Tenant                = $Tenant
         CertificateThumbprint = $CertificateThumbprint
         OutputCsv             = $csvPath
+        OutputBuCsv           = $buCsvPath
         GraphOnly             = $GraphOnly
         DeepScan              = $DeepScan
         IncludeOneDrive       = $IncludeOneDrive
@@ -95,12 +97,14 @@ try {
     $cutoff = (Get-Date).AddDays(-$RetentionDays)
     Get-ChildItem -Path $OutputFolder -File |
         Where-Object {
-            ($_.Name -like 'SPSite-BU-Report_*.csv' -or $_.Name -like 'Transcript_*.log') -and
+            ($_.Name -like 'SPSite-BU-Report_*.csv' -or
+             $_.Name -like 'SPSite-BU-Zuteilung_*.csv' -or
+             $_.Name -like 'Transcript_*.log') -and
             $_.LastWriteTime -lt $cutoff
         } |
         Remove-Item -Force
 
-    Write-Host ("Lauf erfolgreich. Report: {0}" -f $csvPath) -ForegroundColor Green
+    Write-Host ("Lauf erfolgreich. Detail-Report: {0} | Zuteilungs-Report: {1}" -f $csvPath, $buCsvPath) -ForegroundColor Green
     exit 0
 }
 catch {
