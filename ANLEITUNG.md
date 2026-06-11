@@ -202,6 +202,7 @@ steht die genaue Fehlermeldung.
 
 | Fehler | Ursache / Lösung |
 |---|---|
+| 401/Unauthorized trotz «erteilter» Permissions | Permissions sind als **Delegated** statt **Application** angelegt – App-Only (Zertifikat) ignoriert Delegated komplett. Bei *Add a permission* die Kachel **«Application permissions»** wählen, Spalte *Type* muss «Application» zeigen, dann Admin Consent erneut erteilen |
 | `AADSTS700016: Application ... was not found` | `$ClientId` oder `$Tenant` falsch |
 | `AADSTS700027: ... invalid client assertion / certificate` | Hochgeladenes `.cer` passt nicht zum verwendeten Zertifikat – Thumbprint vergleichen |
 | `Authorization_RequestDenied` / `Access denied` bei Graph | Application-Permissions fehlen oder **Admin Consent nicht erteilt** (Schritt 2) |
