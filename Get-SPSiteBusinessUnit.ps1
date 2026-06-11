@@ -617,8 +617,20 @@ if ($outputDir -and -not (Test-Path -Path $outputDir)) {
 $requiredModules = @('Microsoft.Graph.Authentication')
 if (-not $GraphOnly) { $requiredModules += 'PnP.PowerShell' }
 foreach ($module in $requiredModules) {
-    if (-not (Get-Module -ListAvailable -Name $module)) {
+    $installed = Get-Module -ListAvailable -Name $module | Sort-Object -Property Version -Descending | Select-Object -First 1
+    if (-not $installed) {
         throw ("Benoetigtes Modul '{0}' fehlt. Installation: Install-Module {0} -Scope CurrentUser" -f $module)
+    }
+    Write-Host ("Modul: {0} {1} | PowerShell {2}" -f $installed.Name, $installed.Version, $PSVersionTable.PSVersion) -ForegroundColor DarkGray
+}
+
+# PnP 1.x kollidiert auf PowerShell 7.2+ mit den Azure.*-Assemblies des
+# Graph-SDK (Symptom: Connect-MgGraph wirft TypeInitializationException
+# fuer Azure.Core.Pipeline.DiagnosticScopeFactory)
+if (-not $GraphOnly) {
+    $pnpVersion = (Get-Module -ListAvailable -Name 'PnP.PowerShell' | Sort-Object -Property Version -Descending | Select-Object -First 1).Version
+    if ($pnpVersion.Major -lt 2 -and $PSVersionTable.PSVersion -ge [version]'7.2') {
+        Write-Warning ("PnP.PowerShell {0} ist fuer PowerShell {1} zu alt und kollidiert mit dem Graph-SDK. Update in einer NEUEN Session: Uninstall-Module PnP.PowerShell -AllVersions -Force; Install-Module PnP.PowerShell -Scope CurrentUser -Force" -f $pnpVersion, $PSVersionTable.PSVersion)
     }
 }
 
@@ -645,13 +657,9 @@ else {
     $script:PnPAuthParams['Interactive'] = $true
 }
 
-if (-not $GraphOnly) {
-    Write-Host ("Verbinde mit SharePoint Admin Center: {0}" -f $TenantAdminUrl) -ForegroundColor Cyan
-    $pnpParams = $script:PnPAuthParams.Clone()
-    $pnpParams['Url'] = $TenantAdminUrl
-    Connect-PnPOnline @pnpParams
-}
-
+# Wichtig: ZUERST Graph verbinden, dann PnP. Das Graph-SDK bringt neuere
+# Azure.*-Assemblies mit; laedt eine aeltere PnP-Version zuerst, scheitert
+# Connect-MgGraph mit einer TypeInitializationException (DiagnosticScopeFactory).
 Write-Host 'Verbinde mit Microsoft Graph...' -ForegroundColor Cyan
 if ($AppOnly) {
     $graphParams = @{ ClientId = $ClientId; TenantId = $Tenant }
@@ -671,6 +679,13 @@ else {
 # -NoWelcome gibt es erst ab Microsoft.Graph 2.x - auf aelteren SDKs weglassen
 if ((Get-Command Connect-MgGraph).Parameters.ContainsKey('NoWelcome')) { $graphParams['NoWelcome'] = $true }
 Connect-MgGraph @graphParams
+
+if (-not $GraphOnly) {
+    Write-Host ("Verbinde mit SharePoint Admin Center: {0}" -f $TenantAdminUrl) -ForegroundColor Cyan
+    $pnpParams = $script:PnPAuthParams.Clone()
+    $pnpParams['Url'] = $TenantAdminUrl
+    Connect-PnPOnline @pnpParams
+}
 
 # =============================================================================
 # Sites einlesen
