@@ -624,13 +624,15 @@ foreach ($module in $requiredModules) {
     Write-Host ("Modul: {0} {1} | PowerShell {2}" -f $installed.Name, $installed.Version, $PSVersionTable.PSVersion) -ForegroundColor DarkGray
 }
 
-# PnP 1.x kollidiert auf PowerShell 7.2+ mit den Azure.*-Assemblies des
-# Graph-SDK (Symptom: Connect-MgGraph wirft TypeInitializationException
-# fuer Azure.Core.Pipeline.DiagnosticScopeFactory)
+# PnP 1.x kollidiert auf PowerShell 7.2+ mit dem Graph-SDK (alte
+# Microsoft.Graph.Core/Azure.*-DLLs in derselben Session). Symptome:
+# Connect-MgGraph TypeInitializationException (DiagnosticScopeFactory) oder
+# "Could not load type ... from assembly 'Microsoft.Graph.Core'" mitten im
+# Lauf. Deshalb harter Abbruch statt Warnung.
 if (-not $GraphOnly) {
     $pnpVersion = (Get-Module -ListAvailable -Name 'PnP.PowerShell' | Sort-Object -Property Version -Descending | Select-Object -First 1).Version
     if ($pnpVersion.Major -lt 2 -and $PSVersionTable.PSVersion -ge [version]'7.2') {
-        Write-Warning ("PnP.PowerShell {0} ist fuer PowerShell {1} zu alt und kollidiert mit dem Graph-SDK. Update in einer NEUEN Session: Uninstall-Module PnP.PowerShell -AllVersions -Force; Install-Module PnP.PowerShell -Scope CurrentUser -Force" -f $pnpVersion, $PSVersionTable.PSVersion)
+        throw ("PnP.PowerShell {0} ist fuer PowerShell {1} zu alt und kollidiert mit dem Graph-SDK. Fix in einer NEUEN Session: Uninstall-Module PnP.PowerShell -AllVersions -Force; Uninstall-Module Microsoft.Graph.Authentication -AllVersions -Force; danach beide Module aktuell installieren (Install-Module ... -Scope CurrentUser -Force)." -f $pnpVersion, $PSVersionTable.PSVersion)
     }
 }
 
