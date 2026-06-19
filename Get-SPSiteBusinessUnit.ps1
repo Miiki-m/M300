@@ -546,21 +546,36 @@ function Get-AssignmentReason {
         return ('{0} Owner ermittelt (Quelle: {1}), aber bei keinem ist das Office-Attribut (physicalDeliveryOfficeName) gepflegt -> BU unbestimmt' -f $ownerCount, $sourceText)
     }
 
+    # Bewusst KEINE Anfuehrungszeichen (") oder Semikolons (;) im Text -
+    # das Semikolon ist das CSV-Trennzeichen, beides wuerde Zellen verrutschen.
+    # Trenner innerhalb der Begruendung daher mit ' / '.
     $suffix = ''
     if ($Majority.NoOfficeCount -gt 0) {
-        $suffix = ('; {0} Owner ohne Office-Attribut unberuecksichtigt' -f $Majority.NoOfficeCount)
+        $suffix = (' / {0} Owner ohne Office-Attribut unberuecksichtigt' -f $Majority.NoOfficeCount)
     }
 
     if ($Majority.IsTie) {
-        return ('Gleichstand zwischen {0} (Basis: {1} Owner mit Office; Quelle: {2}) -> "{3}"{4}' -f $Majority.OfficeCounts, $withOffice, $sourceText, $BusinessUnit, $suffix)
+        return ('Gleichstand zwischen {0} (Basis: {1} Owner mit Office / Quelle: {2}) -> {3}{4}' -f $Majority.OfficeCounts, $withOffice, $sourceText, $BusinessUnit, $suffix)
     }
 
     $mappingText = 'kein Mapping-Eintrag, Office direkt als BU uebernommen'
     if ($OfficeToBusinessUnit.ContainsKey($Majority.MajorityOffice)) {
-        $mappingText = ('Mapping-Tabelle: "{0}" -> "{1}"' -f $Majority.MajorityOffice, $BusinessUnit)
+        $mappingText = ('Mapping-Tabelle: {0} -> {1}' -f $Majority.MajorityOffice, $BusinessUnit)
     }
 
-    return ('{0} von {1} Ownern mit Office ({2}%) am Standort "{3}" (Quelle: {4}); {5}{6}' -f $Majority.TopCount, $withOffice, $Majority.SharePercent, $Majority.MajorityOffice, $sourceText, $mappingText, $suffix)
+    return ('{0} von {1} Ownern mit Office ({2}%) am Standort {3} (Quelle: {4}) / {5}{6}' -f $Majority.TopCount, $withOffice, $Majority.SharePercent, $Majority.MajorityOffice, $sourceText, $mappingText, $suffix)
+}
+
+function Format-Cell {
+    <#
+        Macht einen Wert CSV-sicher: entfernt Zeilenumbrueche und Tabs (sonst
+        verrutschen Zellen) und trimmt. Das CSV-Trennzeichen selbst wird von
+        Export-Csv korrekt in Anfuehrungszeichen gekapselt - hier geht es nur
+        um eingebettete Umbrueche, die kein Parser zuverlaessig handhabt.
+    #>
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    return (([string]$Value) -replace '[\r\n\t]+', ' ').Trim()
 }
 
 function Get-SiteCreator {
@@ -835,30 +850,30 @@ foreach ($site in $sites) {
 
     $results.Add([pscustomobject]@{
             SiteUrl               = $site.Url
-            SiteTitel             = $site.Title
+            SiteTitel             = Format-Cell $site.Title
             Vorlage               = $site.Template
             GroupId               = if ($site.GroupId -and $site.GroupId -ne [guid]::Empty) { [string]$site.GroupId } else { '' }
             SpeicherMB            = $storageMB
             SpeicherGB            = $storageGB
-            OwnerRoh              = $ownerRaw
-            OwnerQuelle           = ($owners.Sources -join ' | ')
+            OwnerRoh              = Format-Cell $ownerRaw
+            OwnerQuelle           = Format-Cell ($owners.Sources -join ' | ')
             AnzahlOwner           = $owners.Users.Count
-            Owners                = ($owners.Users | ForEach-Object { '{0} <{1}>' -f $_.DisplayName, $_.Upn }) -join ' | '
-            OfficeVerteilung      = $majority.OfficeCounts
+            Owners                = Format-Cell (($owners.Users | ForEach-Object { '{0} <{1}>' -f $_.DisplayName, $_.Upn }) -join ' | ')
+            OfficeVerteilung      = Format-Cell $majority.OfficeCounts
             OwnerOhneOffice       = $majority.NoOfficeCount
-            MehrheitsOffice       = $majority.MajorityOffice
+            MehrheitsOffice       = Format-Cell $majority.MajorityOffice
             MehrheitAnteilProzent = $majority.SharePercent
             Gleichstand           = if ($majority.IsTie) { 'Ja' } else { 'Nein' }
-            BusinessUnit          = $businessUnit
-            Ersteller             = Get-SiteCreator -SiteUrl $site.Url
-            Hinweis               = ($notes -join ' | ')
+            BusinessUnit          = Format-Cell $businessUnit
+            Ersteller             = Format-Cell (Get-SiteCreator -SiteUrl $site.Url)
+            Hinweis               = Format-Cell ($notes -join ' | ')
         })
 
     $buResults.Add([pscustomobject]@{
-            SiteName     = $site.Title
+            SiteName     = Format-Cell $site.Title
             SiteUrl      = $site.Url
-            BusinessUnit = $businessUnit
-            Begruendung  = $reason
+            BusinessUnit = Format-Cell $businessUnit
+            Begruendung  = Format-Cell $reason
             SpeicherMB   = $storageMB
             SpeicherGB   = $storageGB
         })
