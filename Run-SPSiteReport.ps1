@@ -83,6 +83,7 @@ try {
         ClientId              = $ClientId
         Tenant                = $Tenant
         CertificateThumbprint = $CertificateThumbprint
+        ExportCsv             = $true          # geplante Laeufe schreiben Dateien
         OutputCsv             = $csvPath
         OutputBuCsv           = $buCsvPath
         GraphOnly             = $GraphOnly
@@ -91,7 +92,8 @@ try {
     }
     if ($TenantAdminUrl) { $reportParams['TenantAdminUrl'] = $TenantAdminUrl }
 
-    & $ScriptPath @reportParams
+    # Rueckgabe-Array verwerfen - der geplante Lauf braucht nur die CSV-Dateien
+    & $ScriptPath @reportParams | Out-Null
 
     # Alte Reports/Logs aufraeumen (nur eigene Dateimuster anfassen)
     $cutoff = (Get-Date).AddDays(-$RetentionDays)

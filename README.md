@@ -128,9 +128,26 @@ Offices ohne Mapping-Eintrag werden 1:1 als Business Unit übernommen. Bei
 Gleichstand zweier Offices, die auf **dieselbe** BU zeigen, gilt diese BU –
 sonst `Unbestimmt (Gleichstand: …)`.
 
-### CSV-Ausgaben
+### Ausgabe: Array (Standard) oder CSV
 
-Das Skript erzeugt **zwei** CSVs:
+Standardmässig gibt das Skript die Auswertung als **Array von Objekten** zurück
+(kein CSV → keine verrutschten Excel-Zellen). Zugriff über die Eigenschaften
+`.Detail` (alle Spalten) und `.Zuteilung` (Site → BU → Begründung → Speicher):
+
+```powershell
+$r = .\Get-SPSiteBusinessUnit.ps1 -GraphOnly -ClientId <id> -Tenant <t> -CertificateThumbprint <tp>
+$r.Zuteilung | Out-GridView                 # sortier-/filterbare Ansicht, kein Excel nötig
+$r.Zuteilung | Export-Excel .\report.xlsx   # echtes .xlsx (Install-Module ImportExcel), verrutscht nie
+$r.Zuteilung | Set-Clipboard                # direkt in Excel einfügen (spaltentreu)
+```
+
+Mit `-ExportCsv` werden zusätzlich die zwei CSVs geschrieben (Pfade über
+`-OutputCsv` / `-OutputBuCsv`). Alle Freitextfelder werden via `Format-Cell` von
+Zeilenumbrüchen und Steuerzeichen befreit, damit auch CSV spaltentreu bleibt.
+
+#### CSV-Ausgaben (mit -ExportCsv)
+
+Das Skript erzeugt dann **zwei** CSVs:
 
 1. **Detail-Report** (`-OutputCsv`, Standard `SPSite-BusinessUnit-Report.csv`) – alle Spalten unten
 2. **Zuteilungs-Report** (`-OutputBuCsv`, Standard `SPSite-BU-Zuteilung.csv`) – kompakt für Management/Verrechnung:

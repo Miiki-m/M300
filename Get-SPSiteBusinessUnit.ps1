@@ -176,10 +176,15 @@ param(
     # Einschraenkungen: kein DeepScan, keine Site-Vorlage in der Ausgabe.
     [switch]$GraphOnly = $false,
 
-    # Pfad des Detail-Reports (z.B. 'C:\Temp\Report.csv' oder '.\Report.csv'):
+    # $true = zusaetzlich CSV-Dateien schreiben. Standard $false: das Skript
+    # gibt die Auswertung als Array von Objekten zurueck (kein CSV, daher keine
+    # verrutschten Excel-Zellen). Siehe Beispiele/Hinweis am Ende.
+    [switch]$ExportCsv = $false,
+
+    # Pfad des Detail-Reports (nur bei -ExportCsv):
     [string]$OutputCsv = '.\SPSite-BusinessUnit-Report.csv',
 
-    # Pfad des Zuteilungs-Reports (Site -> BU -> Begruendung -> Speicher):
+    # Pfad des Zuteilungs-Reports (nur bei -ExportCsv; Site -> BU -> Begruendung -> Speicher):
     [string]$OutputBuCsv = '.\SPSite-BU-Zuteilung.csv',
 
     # CSV-Trennzeichen (';' = Excel mit deutschen/schweizer Einstellungen):
@@ -568,14 +573,22 @@ function Get-AssignmentReason {
 
 function Format-Cell {
     <#
-        Macht einen Wert CSV-sicher: entfernt Zeilenumbrueche und Tabs (sonst
-        verrutschen Zellen) und trimmt. Das CSV-Trennzeichen selbst wird von
-        Export-Csv korrekt in Anfuehrungszeichen gekapselt - hier geht es nur
-        um eingebettete Umbrueche, die kein Parser zuverlaessig handhabt.
+        Macht einen Wert CSV-sicher: ersetzt ALLE Zeilenumbrueche, Steuer- und
+        Zeilentrennzeichen (auch exotische wie U+2028/U+2029, NEL U+0085,
+        vertikaler Tabulator, Form-Feed, Zero-Width-Zeichen) durch ein
+        Leerzeichen, fasst Mehrfach-Leerzeichen zusammen und trimmt.
+        Eingebettete Umbrueche in Site-Titeln/Anzeigenamen sind die Hauptursache
+        fuer verrutschte Excel-Zellen - die kommen aus AD/Entra und koennen
+        beliebige Steuerzeichen enthalten.
     #>
     param($Value)
     if ($null -eq $Value) { return '' }
-    return (([string]$Value) -replace '[\r\n\t]+', ' ').Trim()
+    $s = [string]$Value
+    # Steuer- (Cc), Format- (Cf) sowie Zeilen-/Absatztrenner (Zl/Zp) -> Leerzeichen
+    $s = [regex]::Replace($s, '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+', ' ')
+    # alle Whitespace-Varianten (inkl. NEL U+0085, NBSP, Unicode-Spaces) zusammenfassen
+    $s = [regex]::Replace($s, '\s+', ' ')
+    return $s.Trim()
 }
 
 function Get-SiteCreator {
@@ -677,12 +690,14 @@ if ($GraphOnly -and $DeepScan) {
     $DeepScan = $false
 }
 
-# Ausgabepfade frueh validieren - verhindert, dass der Lauf erst ganz am Ende
-# am Export scheitert (z.B. Tippfehler wie '.c:\temp\...' statt 'C:\temp\...')
-foreach ($outputPath in @($OutputCsv, $OutputBuCsv)) {
-    $outputDir = Split-Path -Path $outputPath -Parent
-    if ($outputDir -and -not (Test-Path -Path $outputDir)) {
-        throw ("Ordner fuer Ausgabedatei existiert nicht oder Pfad ist ungueltig: '{0}' (gueltig z.B. 'C:\Temp\Report.csv' oder '.\Report.csv')" -f $outputPath)
+# Ausgabepfade frueh validieren (nur wenn CSV gewuenscht) - verhindert, dass
+# der Lauf erst ganz am Ende am Export scheitert (z.B. Tippfehler im Pfad)
+if ($ExportCsv) {
+    foreach ($outputPath in @($OutputCsv, $OutputBuCsv)) {
+        $outputDir = Split-Path -Path $outputPath -Parent
+        if ($outputDir -and -not (Test-Path -Path $outputDir)) {
+            throw ("Ordner fuer Ausgabedatei existiert nicht oder Pfad ist ungueltig: '{0}' (gueltig z.B. 'C:\Temp\Report.csv' oder '.\Report.csv')" -f $outputPath)
+        }
     }
 }
 
@@ -882,28 +897,49 @@ foreach ($site in $sites) {
 Write-Progress -Activity 'Analysiere SharePoint-Sites' -Completed
 
 # =============================================================================
-# CSV-Export
+# Ausgabe
 # =============================================================================
-$csvParams = @{
-    Path              = $OutputCsv
-    NoTypeInformation = $true
-    Delimiter         = $CsvDelimiter
+# CSV nur auf ausdruecklichen Wunsch (-ExportCsv). Standard: Array-Rueckgabe.
+if ($ExportCsv) {
+    $csvParams = @{
+        Path              = $OutputCsv
+        NoTypeInformation = $true
+        Delimiter         = $CsvDelimiter
+    }
+    if ($PSVersionTable.PSVersion.Major -ge 6) { $csvParams['Encoding'] = 'utf8BOM' }
+    else { $csvParams['Encoding'] = 'UTF8' }
+
+    $results | Export-Csv @csvParams
+
+    $buCsvParams = $csvParams.Clone()
+    $buCsvParams['Path'] = $OutputBuCsv
+    $buResults | Export-Csv @buCsvParams
+
+    Write-Host ("CSV Detail-Report:     {0}" -f (Resolve-Path -Path $OutputCsv)) -ForegroundColor Green
+    Write-Host ("CSV Zuteilungs-Report: {0}" -f (Resolve-Path -Path $OutputBuCsv)) -ForegroundColor Green
 }
-if ($PSVersionTable.PSVersion.Major -ge 6) { $csvParams['Encoding'] = 'utf8BOM' }
-else { $csvParams['Encoding'] = 'UTF8' }
-
-$results | Export-Csv @csvParams
-
-$buCsvParams = $csvParams.Clone()
-$buCsvParams['Path'] = $OutputBuCsv
-$buResults | Export-Csv @buCsvParams
 
 Write-Host ''
 Write-Host ("Fertig: {0} Sites ausgewertet." -f $results.Count) -ForegroundColor Green
-Write-Host ("CSV Detail-Report:     {0}" -f (Resolve-Path -Path $OutputCsv)) -ForegroundColor Green
-Write-Host ("CSV Zuteilungs-Report: {0}" -f (Resolve-Path -Path $OutputBuCsv)) -ForegroundColor Green
 
-# Kurze Zusammenfassung der BU-Verteilung in der Konsole
+# Kurze Zusammenfassung der BU-Verteilung -> Out-Host, damit sie NICHT in das
+# zurueckgegebene Array gelangt (sonst wuerden Format-Objekte mit ausgegeben).
 $results | Group-Object -Property BusinessUnit | Sort-Object -Property Count -Descending |
     Select-Object @{ Name = 'BusinessUnit'; Expression = { $_.Name } }, Count |
-    Format-Table -AutoSize
+    Format-Table -AutoSize | Out-Host
+
+if (-not $ExportCsv) {
+    Write-Host 'Auswertung als Array zurueckgegeben (kein CSV). Zugriff ueber die Eigenschaften .Detail und .Zuteilung, z.B.:' -ForegroundColor Cyan
+    Write-Host '  $r = .\Get-SPSiteBusinessUnit.ps1 -GraphOnly -ClientId <id> -Tenant <t> -CertificateThumbprint <tp>' -ForegroundColor Cyan
+    Write-Host '  $r.Zuteilung | Out-GridView                 # sortier-/filterbare Ansicht, kein Excel noetig' -ForegroundColor Cyan
+    Write-Host '  $r.Zuteilung | Export-Excel .\report.xlsx   # echtes .xlsx (Install-Module ImportExcel), verrutscht nie' -ForegroundColor Cyan
+    Write-Host '  $r.Zuteilung | Set-Clipboard                # direkt in Excel einfuegen (spaltentreu)' -ForegroundColor Cyan
+}
+
+# Rueckgabe an die Pipeline: zwei Arrays in einem Objekt
+# .Detail    = vollstaendiger Report (alle Spalten)
+# .Zuteilung = Site -> BusinessUnit -> Begruendung -> Speicher
+[pscustomobject]@{
+    Detail    = @($results)
+    Zuteilung = @($buResults)
+}
