@@ -6,7 +6,7 @@
     Owner/Admins auf (inkl. Owner-Gruppen), ermittelt pro Person den
     Office-Standort (physicalDeliveryOfficeName / officeLocation) und leitet
     daraus per Mehrheitsentscheid die Business Unit der Site ab.
-    Das Resultat wird als CSV exportiert.
+    Das Resultat wird als Array von Objekten zurueckgegeben (CSV optional mit -ExportCsv).
 
 .DESCRIPTION
     Ablauf:
@@ -30,12 +30,13 @@
          Office -> Business Unit kann in der Tabelle $OfficeToBusinessUnit
          (siehe unten) gepflegt werden; ohne Eintrag gilt das Office selbst
          als Business Unit. Gleichstaende werden ausgewiesen.
-      5. Exportiert zwei CSVs (Standard: Semikolon-getrennt, UTF-8 mit BOM ->
-         direkt in Excel verwendbar):
-         - Detail-Report (OutputCsv): alle Sites mit Ownern, Office-Verteilung,
-           Mehrheit, Speicherverbrauch usw.
-         - Zuteilungs-Report (OutputBuCsv): Site -> Business Unit ->
-           Begruendung der Zuteilung -> Speicherverbrauch.
+      5. Gibt das Ergebnis als Objekt mit zwei Arrays zurueck:
+         - .Detail    = alle Sites mit Ownern, Office-Verteilung, Mehrheit,
+                        Speicherverbrauch usw. (voller Report)
+         - .Zuteilung = Site -> Business Unit -> Begruendung -> Speicher
+         Mit -ExportCsv werden zusaetzlich zwei CSVs geschrieben (Semikolon,
+         UTF-8 mit BOM). Ohne -ExportCsv entsteht KEIN CSV (kein Trennzeichen
+         -> keine verrutschten Excel-Zellen).
 
 .PARAMETER TenantAdminUrl
     URL des SharePoint Admin Centers, z.B. https://contoso-admin.sharepoint.com
